@@ -250,7 +250,7 @@ def generate_trajectories_from_d4rl(env_name='CartPole-v1', gamma=0.99):
     return trajectories
 
 
-def convert_to_trajectory_format(loaded_trajectories, gamma=0.99):
+def convert_to_trajectory_format(loaded_trajectories, gamma=1):
     converted_trajectories = []
     
     for trajectory in loaded_trajectories:
