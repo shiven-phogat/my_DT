@@ -4,24 +4,25 @@ import numpy as np
 from torch.utils.data import DataLoader, TensorDataset
 from Generate_Reacher_Trajectories import generate_trajectories
 from decision_transformer import DecisionTransformer
+import pickle
 
 
 # Prepare dataset for discrete actions
-# def prepare_dataset(trajectories):
-#     returns, states, actions, timesteps = [], [], [], []
-#     for traj in trajectories:
-#         for i in range(len(traj) - 1):
-#             r, s, a, t = traj[i]
-#             returns.append([r])
-#             states.append(s)
-#             actions.append([int(a)])  # Store as index
-#             timesteps.append([t])
-#     return (
-#         torch.tensor(returns, dtype=torch.float32),
-#         torch.tensor(states, dtype=torch.float32),
-#         torch.tensor(actions, dtype=torch.long),
-#         torch.tensor(timesteps, dtype=torch.long)
-#     )
+def prepare_dataset(trajectories):
+    returns, states, actions, timesteps = [], [], [], []
+    for traj in trajectories:
+        for i in range(len(traj) - 1):
+            r, s, a, t = traj[i]
+            returns.append([r])
+            states.append(s)
+            actions.append([int(a)])  # Store as index
+            timesteps.append([t])
+    return (
+        torch.tensor(returns, dtype=torch.float32),
+        torch.tensor(states, dtype=torch.float32),
+        torch.tensor(actions, dtype=torch.long),
+        torch.tensor(timesteps, dtype=torch.long)
+    )
 
 # def prepare_dataset(trajectories):
 #     returns, states, actions, timesteps = [], [], [], []
@@ -42,28 +43,28 @@ from decision_transformer import DecisionTransformer
 #         torch.tensor(timesteps, dtype=torch.long)
 #     )
 
-def prepare_dataset(trajectories):
-    returns, states, actions, timesteps = [], [], [], []
-    for traj in trajectories:
-        rewards = [step[0] for step in traj]
-        total_return = sum(rewards)
-        print(total_return)
-        cumulative = 0.0
-        for i, (r, s, a, t) in enumerate(traj):
-            rtg = total_return - cumulative
-            print(len(traj))
-            returns.append([rtg])
-            states.append(s)
-            actions.append([int(a)])
-            timesteps.append([t])
-            cumulative += r  # Accumulate reward to subtract in next step
+# def prepare_dataset(trajectories):
+#     returns, states, actions, timesteps = [], [], [], []
+#     for traj in trajectories:
+#         rewards = [step[0] for step in traj]
+#         total_return = sum(rewards)
+#         print(total_return)
+#         cumulative = 0.0
+#         for i, (r, s, a, t) in enumerate(traj):
+#             rtg = total_return - cumulative
+#             print(len(traj))
+#             returns.append([rtg])
+#             states.append(s)
+#             actions.append([int(a)])
+#             timesteps.append([t])
+#             cumulative += r  # Accumulate reward to subtract in next step
 
-    return (
-        torch.tensor(returns, dtype=torch.float32),
-        torch.tensor(states, dtype=torch.float32),
-        torch.tensor(actions, dtype=torch.long),
-        torch.tensor(timesteps, dtype=torch.long)
-    )
+#     return (
+#         torch.tensor(returns, dtype=torch.float32),
+#         torch.tensor(states, dtype=torch.float32),
+#         torch.tensor(actions, dtype=torch.long),
+#         torch.tensor(timesteps, dtype=torch.long)
+#     )
 
 
 # Training function
@@ -177,6 +178,7 @@ def get_second_last_layer_output(model, state, return_to_go, timestep):
     return second_last_hidden['output'][:, -1]  # shape: [1, hidden_dim]
 
 
+
 def evaluate_model(model, dataloader):
     model.eval()
     correct = 0
@@ -200,6 +202,75 @@ def evaluate_model(model, dataloader):
     print(f"Validation Accuracy: {accuracy * 100:.2f}%")
     return accuracy
 
+import gym
+import d4rl
+import torch
+import numpy as np
+
+def generate_trajectories_from_d4rl(env_name='CartPole-v1', gamma=0.99):
+    env = gym.make(env_name)
+    dataset = env.get_dataset()
+
+    trajectories = []
+    traj = {'observations': [], 'actions': [], 'rewards': [], 'dones': [], 'timesteps': []}
+    
+    N = dataset['observations'].shape[0]
+    timestep = 0
+
+    for i in range(N):
+        traj['observations'].append(dataset['observations'][i])
+        traj['actions'].append(dataset['actions'][i])
+        traj['rewards'].append(dataset['rewards'][i])
+        done_bool = bool(dataset['terminals'][i]) or bool(dataset['timeouts'][i])
+        traj['dones'].append(done_bool)
+        traj['timesteps'].append(timestep)
+
+        timestep += 1
+
+        if done_bool:
+            # Now compute discounted returns
+            rewards = traj['rewards']
+            returns = np.zeros(len(rewards))
+            G = 0
+            for t in reversed(range(len(rewards))):
+                G = rewards[t] + gamma * G
+                returns[t] = G
+
+            trajectory = []
+            for r, s, a, t in zip(returns, traj['observations'], traj['actions'], traj['timesteps']):
+                trajectory.append((r, s, a, t))
+
+            trajectories.append(trajectory)
+
+            # reset for next episode
+            traj = {'observations': [], 'actions': [], 'rewards': [], 'dones': [], 'timesteps': []}
+            timestep = 0
+
+    env.close()
+    return trajectories
+
+
+def convert_to_trajectory_format(loaded_trajectories, gamma=0.99):
+    converted_trajectories = []
+    
+    for trajectory in loaded_trajectories:
+        # Assuming the format is (state, action, reward, timestep)
+        rewards,states, actions, timesteps = zip(*trajectory)
+        
+        # Compute returns (discounted sum of rewards)
+        returns = np.zeros(len(rewards))
+        G = 0
+        for t in reversed(range(len(rewards))):
+            G = rewards[t] + gamma * G
+            returns[t] = G
+        
+        # Create new trajectory with returns, states, actions, and timesteps
+        converted_trajectory = [(r, s, a, t) for r, (s, a, t) in zip(returns, zip(states, actions, timesteps))]
+        converted_trajectories.append(converted_trajectory)
+    
+    return converted_trajectories
+
+
 
 
 
@@ -207,9 +278,20 @@ def evaluate_model(model, dataloader):
 
 # Main
 if __name__ == "__main__":
+    # Load the trajectories from the file
+    with open("cartpole_trajectories.pkl", "rb") as f:
+        loaded_trajectories = pickle.load(f)
+
+# Check the loaded data
+    print(f"Loaded {len(loaded_trajectories)} trajectories.")
+
+# Optionally, inspect the first trajectory
+    #print("First trajectory data:", loaded_trajectories[0])
+    trajectories=convert_to_trajectory_format(loaded_trajectories)
     env_name = 'CartPole-v1'
-    n = 100
-    trajectories = generate_trajectories(n, env_name=env_name)
+    n = 25000
+    #trajectories = generate_trajectories(n, env_name=env_name)   #original code to generate random traj
+    #trajectories = generate_trajectories_from_d4rl()               #code to generate d4rl trajectories
     returns, states, actions, timesteps = prepare_dataset(trajectories)
 
     # from sklearn.model_selection import train_test_split
@@ -240,7 +322,7 @@ if __name__ == "__main__":
     model = DecisionTransformer(
         state_dim=state_dim,
         act_dim=num_actions,
-        hidden_size=256,
+        hidden_size=128,
         max_length=1000,
         action_tanh=False  # Not needed for discrete actions
     )
@@ -273,3 +355,4 @@ if __name__ == "__main__":
 
     output = get_second_last_layer_output(model, example_state, max_return, example_timestep)
     print("Second last layer output:", output)
+    print(output.shape())

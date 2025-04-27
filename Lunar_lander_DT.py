@@ -152,7 +152,7 @@ def train_lfa_dqn(env_name='LunarLander-v3', episodes=500, gamma=0.99, lr=1e-3, 
     dt_model = DecisionTransformer(
         state_dim=state_dim,
         act_dim=num_actions,
-        hidden_size=256,
+        hidden_size=128, # feature dimension
         max_length=1000,
         action_tanh=False
     )
@@ -163,7 +163,7 @@ def train_lfa_dqn(env_name='LunarLander-v3', episodes=500, gamma=0.99, lr=1e-3, 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dt_model.to(device)
 
-    feature_dim = 256  # Same as hidden size of the DT
+    feature_dim = 128  # Same as hidden size of the DT
     q_network = LFA_DQN(feature_dim, num_actions).to(device)
     optimizer = optim.Adam(q_network.parameters(), lr=lr)
     criterion = nn.MSELoss()
@@ -176,7 +176,7 @@ def train_lfa_dqn(env_name='LunarLander-v3', episodes=500, gamma=0.99, lr=1e-3, 
         total_reward = 0
         done = False
         timestep = 0
-        return_to_go = 6000.0  # Arbitrary return target for embedding
+        return_to_go = 500.0  # Arbitrary return target for embedding
 
         while not done:
             state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
